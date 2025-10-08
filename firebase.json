@@ -1,0 +1,37 @@
+{
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "gean-truck",
+          "appId": "1:501291861073:android:7d36f103b512c2818ae470",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "gean-truck",
+          "configurations": {
+            "android": "1:501291861073:android:7d36f103b512c2818ae470",
+            "ios": "1:501291861073:ios:52a2e521e11cf2c18ae470",
+            "web": "1:501291861073:web:15848f11615e3b8e8ae470"
+          }
+        }
+      }
+    }
+  }
+}

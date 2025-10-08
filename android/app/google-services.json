@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "501291861073",
+    "project_id": "gean-truck",
+    "storage_bucket": "gean-truck.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:501291861073:android:7d36f103b512c2818ae470",
+        "android_client_info": {
+          "package_name": "com.example.geantruck"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC8gUxkLOF5BPOM3vsooQySCbCcUK4iUyM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
