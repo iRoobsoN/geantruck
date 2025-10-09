@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; // Mantido para o DateFormat
 
 import '../models/truck_model.dart';
-import '../models/maintenance_model.dart'; // Import necessário para _RecordsList
-import '../models/refueling_model.dart';   // Import necessário para _RecordsList
-import '../models/expense_model.dart';     // Import necessário para _RecordsList
+import '../models/maintenance_model.dart';
+import '../models/refueling_model.dart';
+import '../models/expense_model.dart';
 
 import '../services/firestore_service.dart';
 import 'add_record_screen.dart';
 import 'stats_screen.dart';
+import 'truck_health_screen.dart';
 
 class TruckDetailsScreen extends StatefulWidget {
   final String truckId;
@@ -31,20 +32,33 @@ class _TruckDetailsScreenState extends State<TruckDetailsScreen>
     with SingleTickerProviderStateMixin {
   TabController? _tabController;
   int _currentIndex = 0;
+  String _currentTitle = 'Saúde'; // Título inicial
 
   final GlobalKey<StatsScreenState> _statsScreenKey = GlobalKey<StatsScreenState>();
   final FirestoreService _firestoreService = FirestoreService();
 
   void _setupTabController(bool isManager) {
-    int tabLength = isManager ? 3 : 2;
+    int tabLength = isManager ? 4 : 3;
     if (_tabController?.length == tabLength) return;
     
     _tabController?.dispose();
     _tabController = TabController(length: tabLength, vsync: this);
     _tabController!.addListener(() {
       if (!mounted) return;
-      setState(() => _currentIndex = _tabController!.index);
+      setState(() {
+        _currentIndex = _tabController!.index;
+        // ATUALIZA O TÍTULO DA ABA ATUAL
+        _currentTitle = _getTabTitle(_currentIndex, isManager);
+      });
     });
+    // Define o título inicial
+    _currentTitle = _getTabTitle(0, isManager);
+  }
+  
+  // Função para obter o título da aba com base no índice
+  String _getTabTitle(int index, bool isManager) {
+    final titles = ['Saúde', 'Registros', 'Relatórios', if (isManager) 'Responsável'];
+    return titles[index];
   }
 
   @override
@@ -88,19 +102,50 @@ class _TruckDetailsScreenState extends State<TruckDetailsScreen>
 
             return Scaffold(
               appBar: AppBar(
-                title: Text(currentTruck.name),
+                // O título da AppBar agora mostra o nome do caminhão e o nome da aba
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(currentTruck.name, style: const TextStyle(fontSize: 18)),
+                    Text(_currentTitle, style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.8))),
+                  ],
+                ),
                 backgroundColor: Colors.blue.shade800,
                 bottom: TabBar(
                   controller: _tabController,
                   indicatorColor: Colors.white,
+                  indicatorWeight: 3.0,
+                  // MUDANÇA: 'isScrollable' removido para distribuir o espaço igualmente
                   tabs: [
-                    const Tab(icon: Icon(Icons.history), text: 'Registros'),
-                    const Tab(icon: Icon(Icons.bar_chart), text: 'Relatórios'),
-                    if (isManager) const Tab(icon: Icon(Icons.person_add_alt_1), text: 'Responsável'),
-                  ],
+  const Tab(
+    icon: Tooltip(
+      message: 'Saúde',
+      child: Icon(Icons.favorite_border),
+    ),
+  ),
+  const Tab(
+    icon: Tooltip(
+      message: 'Registros',
+      child: Icon(Icons.history),
+    ),
+  ),
+  const Tab(
+    icon: Tooltip(
+      message: 'Relatórios',
+      child: Icon(Icons.bar_chart),
+    ),
+  ),
+  if (isManager)
+    const Tab(
+      icon: Tooltip(
+        message: 'Responsável',
+        child: Icon(Icons.person_add_alt_1),
+      ),
+    ),
+],
                 ),
                 actions: [
-                  if (_currentIndex == 1) 
+                  if (_currentIndex == 2) 
                     IconButton(
                       icon: const Icon(Icons.picture_as_pdf),
                       onPressed: () => _statsScreenKey.currentState?.exportPdf(),
@@ -111,6 +156,7 @@ class _TruckDetailsScreenState extends State<TruckDetailsScreen>
               body: TabBarView(
                 controller: _tabController,
                 children: [
+                  TruckHealthScreen(ownerId: widget.ownerId, truckId: widget.truckId),
                   _RecordsList(truck: currentTruck),
                   StatsScreen(
                     key: _statsScreenKey,
@@ -121,7 +167,7 @@ class _TruckDetailsScreenState extends State<TruckDetailsScreen>
                     _ResponsibleTab(truck: currentTruck),
                 ],
               ),
-              floatingActionButton: _currentIndex == 0
+              floatingActionButton: _currentIndex == 1
                   ? FloatingActionButton(
                       backgroundColor: Colors.blue.shade800,
                       onPressed: () => Navigator.push(context, MaterialPageRoute(
@@ -142,7 +188,8 @@ class _TruckDetailsScreenState extends State<TruckDetailsScreen>
   }
 }
 
-// --- CLASSE _RecordsList ADICIONADA DE VOLTA ---
+// --- As classes _RecordsList e _ResponsibleTab permanecem exatamente as mesmas ---
+
 class _RecordsList extends StatelessWidget {
   final TruckModel truck;
   const _RecordsList({required this.truck});
@@ -164,6 +211,8 @@ class _RecordsList extends StatelessWidget {
           Icon(Icons.inbox_outlined, size: 80, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text('Nenhum registro encontrado', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+          const SizedBox(height: 8),
+          Text('Pressione e segure um registro para excluí-lo.', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
         ]));}
         final records = snapshot.data!;
         return ListView.builder(
@@ -171,33 +220,70 @@ class _RecordsList extends StatelessWidget {
           itemCount: records.length,
           itemBuilder: (context, index) {
             final record = records[index];
-            return _buildRecordTile(context, record, firestoreService);
+            return _buildRecordTile(context, record, firestoreService, ownerIdToUse);
           },
         );
       },
     );
   }
 
-  Widget _buildRecordTile(BuildContext context, dynamic record, FirestoreService firestoreService) {
+  Future<void> _showDeleteConfirmationDialog(BuildContext context, dynamic record, FirestoreService service, String ownerId) async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Confirmar Exclusão'),
+          content: const SingleChildScrollView(child: ListBody(children: <Widget>[Text('Tem certeza que deseja excluir este registro?'), Text('Esta ação não pode ser desfeita.')])),
+          actions: <Widget>[
+            TextButton(child: const Text('Cancelar'), onPressed: () => Navigator.of(dialogContext).pop()),
+            TextButton(
+              child: const Text('Excluir', style: TextStyle(color: Colors.red)),
+              onPressed: () async {
+                String collectionName;
+                if (record is MaintenanceModel) collectionName = 'maintenances';
+                else if (record is RefuelingModel) collectionName = 'refuelings';
+                else if (record is ExpenseModel) collectionName = 'expenses';
+                else return;
+                try {
+                  await service.deleteRecord(ownerId, truck.id, collectionName, record.id);
+                  if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Registro excluído com sucesso.'), backgroundColor: Colors.green));
+                } catch (e) {
+                  if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir: $e'), backgroundColor: Colors.red));
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildRecordTile(BuildContext context, dynamic record, FirestoreService firestoreService, String ownerId) {
     IconData icon; String title; String subtitle; String amount; String createdByUid = record.createdBy;
     if (record is MaintenanceModel) { icon = Icons.build; title = 'Manutenção'; subtitle = record.description; amount = '- R\$ ${record.cost.toStringAsFixed(2)}';
-    } else if (record is RefuelingModel) { icon = Icons.local_gas_station; title = 'Abastecimento'; subtitle = '${record.liters.toStringAsFixed(2)} litros'; amount = '- R\$ ${record.cost.toStringAsFixed(2)}';
+    } else if (record is RefuelingModel) { icon = Icons.local_gas_station; title = 'Abastecimento'; subtitle = '${record.liters.toStringAsFixed(2)} L  •  ${record.odometer} km'; amount = '- R\$ ${record.cost.toStringAsFixed(2)}';
     } else if (record is ExpenseModel) { icon = Icons.receipt_long; title = 'Outra Despesa'; subtitle = record.description; amount = '- R\$ ${record.cost.toStringAsFixed(2)}';
     } else { return const SizedBox.shrink(); }
-    return Card( margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), elevation: 2, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), child: Padding( padding: const EdgeInsets.only(top: 12, bottom: 8, left: 16, right: 16), child: Column( children: [
-      Row( crossAxisAlignment: CrossAxisAlignment.start, children: [
-        CircleAvatar(backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1), child: Icon(icon, color: Theme.of(context).primaryColor)),
-        const SizedBox(width: 16),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
-        ])),
-        const SizedBox(width: 8),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(amount, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red[700], fontSize: 15)), const SizedBox(height: 4), Text(DateFormat('dd/MM/yy').format(record.date), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+    return GestureDetector(
+      onLongPress: () => _showDeleteConfirmationDialog(context, record, firestoreService, ownerId),
+      child: Card( margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), elevation: 2, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), child: Padding( padding: const EdgeInsets.only(top: 12, bottom: 8, left: 16, right: 16), child: Column( children: [
+        Row( crossAxisAlignment: CrossAxisAlignment.start, children: [
+          CircleAvatar(backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1), child: Icon(icon, color: Theme.of(context).primaryColor)),
+          const SizedBox(width: 16),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+          ])),
+          const SizedBox(width: 8),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text(amount, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red[700], fontSize: 15)), const SizedBox(height: 4), Text(DateFormat('dd/MM/yy').format(record.date), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          ]),
         ]),
-      ]),
-      if (createdByUid.isNotEmpty) ...[ const Divider(height: 16), _buildCreatorInfo(context, createdByUid, firestoreService), ]
-    ])));
+        if (createdByUid.isNotEmpty) ...[ const Divider(height: 16), _buildCreatorInfo(context, createdByUid, firestoreService), ]
+      ]))),
+    );
   }
 
   Widget _buildCreatorInfo(BuildContext context, String creatorUid, FirestoreService firestoreService) {

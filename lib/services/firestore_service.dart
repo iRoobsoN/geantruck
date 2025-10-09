@@ -10,6 +10,32 @@ class FirestoreService {
 
   // --- MÉTODOS DE USUÁRIO ---
 
+
+Stream<List<RefuelingModel>> getRefuelingsForTruck(String ownerId, String truckId) {
+    return _db
+        .collection('users')
+        .doc(ownerId)
+        .collection('trucks')
+        .doc(truckId)
+        .collection('refuelings')
+        .orderBy('date', descending: true) // Ordena do mais recente para o mais antigo
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => RefuelingModel.fromFirestore(doc, truckId))
+            .toList());
+  }
+
+Future<void> deleteRecord(String ownerId, String truckId, String collectionName, String recordId) {
+    return _db
+        .collection('users')
+        .doc(ownerId)
+        .collection('trucks')
+        .doc(truckId)
+        .collection(collectionName)
+        .doc(recordId)
+        .delete();
+  }
+
   Future<QuerySnapshot> findEmployeeByEmail(String email) {
     if (email.trim().isEmpty) {
       // Retorna um Future com um snapshot vazio se a busca for vazia.
