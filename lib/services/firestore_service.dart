@@ -8,106 +8,151 @@ import '../models/expense_model.dart';
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // Truck operations
+  // --- MÉTODOS DE USUÁRIO ---
+
+  Future<QuerySnapshot> findEmployeeByEmail(String email) {
+    if (email.trim().isEmpty) {
+      // Retorna um Future com um snapshot vazio se a busca for vazia.
+      return Future.value(null); // Essa linha precisará de um ajuste no tipo de retorno se o Dart reclamar.
+                                 // Uma forma mais segura seria lançar uma exceção, mas vamos tratar na UI.
+    }
+    return _db
+        .collection('users')
+        .where('role', isEqualTo: 'funcionario') 
+        .where('email', isEqualTo: email.trim())
+        .limit(1) // Busca no máximo 1 resultado, pois o e-mail deve ser único.
+        .get();
+  }
+
+  Future<void> createUserDocument(String uid, String email, String name, String role) {
+    return _db.collection('users').doc(uid).set({
+      'uid': uid,
+      'email': email,
+      'name': name,
+      'role': role, // Usa o cargo passado como parâmetro.
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<DocumentSnapshot> getUserById(String userId) {
+    return _db.collection('users').doc(userId).get();
+  }
+
+  Future<void> updateUserProfile(String userId, String name, String newRole) {
+    if (newRole != 'gerente' && newRole != 'funcionario') {
+      throw Exception("Cargo inválido selecionado.");
+    }
+    if (name.trim().isEmpty) {
+      throw Exception("O nome não pode estar vazio.");
+    }
+    return _db.collection('users').doc(userId).update({
+      'name': name,
+      'role': newRole,
+    });
+  }
+
+  Stream<QuerySnapshot> searchEmployeesByEmail(String emailQuery) {
+    if (emailQuery.trim().isEmpty) {
+      return Stream.empty();
+    }
+    return _db
+        .collection('users')
+        .where('role', isEqualTo: 'funcionario')
+        .where('email', isGreaterThanOrEqualTo: emailQuery)
+        .where('email', isLessThanOrEqualTo: '$emailQuery\uf8ff')
+        .snapshots();
+  }
+
+  // --- MÉTODOS DE CAMINHÃO ---
+
   Stream<List<TruckModel>> getTrucks(String userId) {
     return _db
         .collection('users')
         .doc(userId)
         .collection('trucks')
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => TruckModel(id: doc.id, name: doc.data()['name'], plate: doc.data()['plate']))
-            .toList());
+        .map((snapshot) => snapshot.docs.map((doc) => TruckModel.fromFirestore(doc)).toList());
   }
 
+  Stream<List<TruckModel>> getTrucksAssignedToEmployee(String employeeId) {
+    return _db
+        .collectionGroup('trucks')
+        .where('responsibleUserId', isEqualTo: employeeId)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => TruckModel.fromFirestore(doc)).toList());
+  }
+
+  Stream<DocumentSnapshot> getTruckStream(String ownerId, String truckId) {
+    return _db.collection('users').doc(ownerId).collection('trucks').doc(truckId).snapshots();
+  }
+  
   Future<void> addTruck(String userId, TruckModel truck) {
-    return _db.collection('users').doc(userId).collection('trucks').add({
-      'name': truck.name,
-      'plate': truck.plate,
-    });
+    // CORREÇÃO: Garante que o 'ownerId' seja o do gerente que está criando o caminhão.
+    final truckData = truck.toFirestore();
+    truckData['ownerId'] = userId;
+    return _db.collection('users').doc(userId).collection('trucks').add(truckData);
   }
 
-  // Maintenance operations
-  Future<void> addMaintenance(String userId, String truckId, MaintenanceModel maintenance) {
-    return _db.collection('users').doc(userId).collection('trucks').doc(truckId).collection('maintenances').add({
-      'description': maintenance.description,
-      'cost': maintenance.cost,
-      'date': maintenance.date,
-    });
+  Future<void> assignResponsibleToTruck(String ownerId, String truckId, String responsibleUserId) {
+    return _db.collection('users').doc(ownerId).collection('trucks').doc(truckId).update({'responsibleUserId': responsibleUserId});
   }
 
-  // Refueling operations
-  Future<void> addRefueling(String userId, String truckId, RefuelingModel refueling) {
-    return _db.collection('users').doc(userId).collection('trucks').doc(truckId).collection('refuelings').add({
-      'liters': refueling.liters,
-      'cost': refueling.cost,
-      'date': refueling.date,
-    });
+  Future<void> removeResponsibleFromTruck(String ownerId, String truckId) {
+    return _db.collection('users').doc(ownerId).collection('trucks').doc(truckId).update({'responsibleUserId': null});
   }
 
-  // Expense operations
-  Future<void> addExpense(String userId, String truckId, ExpenseModel expense) {
-    return _db.collection('users').doc(userId).collection('trucks').doc(truckId).collection('expenses').add({
-      'description': expense.description,
-      'cost': expense.cost,
-      'date': expense.date,
-    });
+  // --- MÉTODOS DE REGISTROS (Manutenção, Abastecimento, etc.) ---
+
+  Future<void> addMaintenance(String ownerId, String truckId, MaintenanceModel maintenance) {
+    // CORREÇÃO: Usa o ownerId para o caminho e o método .toFirestore() do modelo.
+    return _db.collection('users').doc(ownerId).collection('trucks').doc(truckId).collection('maintenances').add(maintenance.toFirestore());
   }
 
-  // Combined records for a single truck
-  Stream<List<dynamic>> getCombinedRecords(String userId, String truckId) {
+  Future<void> addRefueling(String ownerId, String truckId, RefuelingModel refueling) {
+    // CORREÇÃO: Usa o ownerId para o caminho e o método .toFirestore() do modelo.
+    return _db.collection('users').doc(ownerId).collection('trucks').doc(truckId).collection('refuelings').add(refueling.toFirestore());
+  }
+
+  Future<void> addExpense(String ownerId, String truckId, ExpenseModel expense) {
+    // CORREÇÃO: Usa o ownerId para o caminho e o método .toFirestore() do modelo.
+    return _db.collection('users').doc(ownerId).collection('trucks').doc(truckId).collection('expenses').add(expense.toFirestore());
+  }
+  
+  Stream<List<dynamic>> getCombinedRecords(String ownerId, String truckId) {
     final maintenanceStream = _db
         .collection('users')
-        .doc(userId)
+        .doc(ownerId) // CORREÇÃO: usa ownerId
         .collection('trucks')
         .doc(truckId)
         .collection('maintenances')
         .snapshots()
         .map((snapshot) => snapshot.docs.map((doc) {
-              final data = doc.data();
-              return MaintenanceModel(
-                id: doc.id,
-                truckId: truckId,
-                description: data['description'],
-                cost: data['cost'],
-                date: (data['date'] as Timestamp).toDate(),
-              );
+              // CORREÇÃO: Usa o factory constructor que já lida com todos os campos.
+              return MaintenanceModel.fromFirestore(doc, truckId);
             }).toList());
 
     final refuelingStream = _db
         .collection('users')
-        .doc(userId)
+        .doc(ownerId) // CORREÇÃO: usa ownerId
         .collection('trucks')
         .doc(truckId)
         .collection('refuelings')
         .snapshots()
         .map((snapshot) => snapshot.docs.map((doc) {
-              final data = doc.data();
-              return RefuelingModel(
-                id: doc.id,
-                truckId: truckId,
-                liters: data['liters'],
-                cost: data['cost'],
-                date: (data['date'] as Timestamp).toDate(),
-              );
+              // CORREÇÃO: Usa o factory constructor.
+              return RefuelingModel.fromFirestore(doc, truckId);
             }).toList());
 
     final expenseStream = _db
         .collection('users')
-        .doc(userId)
+        .doc(ownerId) // CORREÇÃO: usa ownerId
         .collection('trucks')
         .doc(truckId)
         .collection('expenses')
         .snapshots()
         .map((snapshot) => snapshot.docs.map((doc) {
-              final data = doc.data();
-              return ExpenseModel(
-                id: doc.id,
-                truckId: truckId,
-                description: data['description'],
-                cost: data['cost'],
-                date: (data['date'] as Timestamp).toDate(),
-              );
+              // CORREÇÃO: Usa o factory constructor.
+              return ExpenseModel.fromFirestore(doc, truckId);
             }).toList());
 
     return CombineLatestStream.list([
@@ -116,59 +161,41 @@ class FirestoreService {
       expenseStream,
     ]).map((lists) {
       final combined = lists.expand((list) => list).toList();
-      combined.sort((a, b) => (a as dynamic).date.compareTo((b as dynamic).date));
+      combined.sort((a, b) => (b as dynamic).date.compareTo((a as dynamic).date));
       return combined;
     });
   }
 
   Future<List<T>> getRecordsForDateRange<T>(
-    String userId,
+    String ownerId,
     String truckId,
     String collectionName,
     DateTime startDate,
     DateTime endDate) async {
-  final snapshot = await _db
-      .collection('users')
-      .doc(userId)
-      .collection('trucks')
-      .doc(truckId)
-      .collection(collectionName)
-      .where('date', isGreaterThanOrEqualTo: startDate)
-      .where('date', isLessThanOrEqualTo: endDate)
-      .get();
+    final snapshot = await _db
+        .collection('users')
+        .doc(ownerId) // CORREÇÃO: usa ownerId
+        .collection('trucks')
+        .doc(truckId)
+        .collection(collectionName)
+        .where('date', isGreaterThanOrEqualTo: startDate)
+        .where('date', isLessThanOrEqualTo: endDate)
+        .get();
 
-  return snapshot.docs.map((doc) {
-    final data = doc.data();
-    final id = doc.id;
-    
-    switch (T) {
-      case MaintenanceModel:
-        return MaintenanceModel(
-          id: id,
-          truckId: truckId,
-          description: data['description'],
-          cost: data['cost'],
-          date: (data['date'] as Timestamp).toDate(),
-        ) as T;
-      case RefuelingModel:
-        return RefuelingModel(
-          id: id,
-          truckId: truckId,
-          liters: data['liters'],
-          cost: data['cost'],
-          date: (data['date'] as Timestamp).toDate(),
-        ) as T;
-      case ExpenseModel:
-        return ExpenseModel(
-          id: id,
-          truckId: truckId,
-          description: data['description'],
-          cost: data['cost'],
-          date: (data['date'] as Timestamp).toDate(),
-        ) as T;
-      default:
-        throw Exception('Unknown model type: $T');
-    }
-  }).toList();
-}
+    return snapshot.docs.map((doc) {
+      switch (T) {
+        case MaintenanceModel:
+          // CORREÇÃO: Usa o factory constructor.
+          return MaintenanceModel.fromFirestore(doc, truckId) as T;
+        case RefuelingModel:
+          // CORREÇÃO: Usa o factory constructor.
+          return RefuelingModel.fromFirestore(doc, truckId) as T;
+        case ExpenseModel:
+          // CORREÇÃO: Usa o factory constructor.
+          return ExpenseModel.fromFirestore(doc, truckId) as T;
+        default:
+          throw Exception('Unknown model type: $T');
+      }
+    }).toList();
+  }
 }

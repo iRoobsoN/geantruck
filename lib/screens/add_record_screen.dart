@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/firestore_service.dart';
 import '../models/maintenance_model.dart';
 import '../models/refueling_model.dart';
 import '../models/expense_model.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 enum RecordType { maintenance, refueling, expense }
 
 class AddRecordScreen extends StatefulWidget {
   final String truckId;
+  final String ownerId; // <-- PARÂMETRO ADICIONADO
 
-  const AddRecordScreen({super.key, required this.truckId});
+  const AddRecordScreen({
+    super.key, 
+    required this.truckId,
+    required this.ownerId, // <-- PARÂMETRO ADICIONADO
+  });
 
   @override
   State<AddRecordScreen> createState() => _AddRecordScreenState();
@@ -23,12 +28,86 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
   final _costController = TextEditingController();
   final _litersController = TextEditingController();
   RecordType _recordType = RecordType.maintenance;
+  bool _isLoading = false; // Para gerenciar o estado de carregamento do botão
+
+  @override
+  void dispose() {
+    _descriptionController.dispose();
+    _costController.dispose();
+    _litersController.dispose();
+    super.dispose();
+  }
+
+  /// Função centralizada para validar e salvar o registro.
+  Future<void> _submitRecord() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    final user = Provider.of<User?>(context, listen: false);
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Erro: Usuário não autenticado.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    final firestoreService = FirestoreService();
+    final cost = double.parse(_costController.text.replaceAll(',', '.'));
+    final date = DateTime.now();
+
+    try {
+      switch (_recordType) {
+        case RecordType.maintenance:
+          final maintenance = MaintenanceModel(
+            id: '',
+            truckId: widget.truckId,
+            description: _descriptionController.text,
+            cost: cost,
+            date: date,
+            createdBy: user.uid, // <-- ID do usuário logado é salvo
+          );
+          await firestoreService.addMaintenance(widget.ownerId, widget.truckId, maintenance);
+          break;
+        case RecordType.refueling:
+          final refueling = RefuelingModel(
+            id: '',
+            truckId: widget.truckId,
+            liters: double.parse(_litersController.text.replaceAll(',', '.')),
+            cost: cost,
+            date: date,
+            createdBy: user.uid, // <-- ID do usuário logado é salvo
+          );
+          await firestoreService.addRefueling(widget.ownerId, widget.truckId, refueling);
+          break;
+        case RecordType.expense:
+          final expense = ExpenseModel(
+            id: '',
+            truckId: widget.truckId,
+            description: _descriptionController.text,
+            cost: cost,
+            date: date,
+            createdBy: user.uid, // <-- ID do usuário logado é salvo
+          );
+          await firestoreService.addExpense(widget.ownerId, widget.truckId, expense);
+          break;
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao salvar registro: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final firestoreService = FirestoreService();
-    final user = Provider.of<User?>(context);
-
     return Scaffold(
       backgroundColor: Colors.grey[200],
       appBar: AppBar(
@@ -42,9 +121,7 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
           padding: const EdgeInsets.all(16.0),
           child: Card(
             elevation: 8.0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16.0),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
             child: Padding(
               padding: const EdgeInsets.all(24.0),
               child: Form(
@@ -54,18 +131,9 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
                   children: [
                     SegmentedButton<RecordType>(
                       segments: const <ButtonSegment<RecordType>>[
-                        ButtonSegment<RecordType>(
-                            value: RecordType.maintenance,
-                            label: Text('Manutenção'),
-                            icon: Icon(Icons.build)),
-                        ButtonSegment<RecordType>(
-                            value: RecordType.refueling,
-                            label: Text('Abastecer'),
-                            icon: Icon(Icons.local_gas_station)),
-                        ButtonSegment<RecordType>(
-                            value: RecordType.expense,
-                            label: Text('Despesa'),
-                            icon: Icon(Icons.receipt)),
+                        ButtonSegment<RecordType>(value: RecordType.maintenance, label: Text('Manutenção'), icon: Icon(Icons.build)),
+                        ButtonSegment<RecordType>(value: RecordType.refueling, label: Text('Abastecer'), icon: Icon(Icons.local_gas_station)),
+                        ButtonSegment<RecordType>(value: RecordType.expense, label: Text('Despesa'), icon: Icon(Icons.receipt)),
                       ],
                       selected: <RecordType>{_recordType},
                       onSelectionChanged: (Set<RecordType> newSelection) {
@@ -87,9 +155,7 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
                         decoration: InputDecoration(
                           labelText: 'Descrição',
                           icon: const Icon(Icons.description),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8.0),
-                          ),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
                         ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
@@ -104,12 +170,9 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
                         decoration: InputDecoration(
                           labelText: 'Litros',
                           icon: const Icon(Icons.local_gas_station),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8.0),
-                          ),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
                         ),
-                        keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
                             return 'Por favor, insira os litros';
@@ -126,12 +189,9 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
                       decoration: InputDecoration(
                         labelText: 'Custo',
                         icon: const Icon(Icons.monetization_on),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8.0),
-                        ),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
                       ),
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'Por favor, insira o custo';
@@ -146,70 +206,16 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        icon: const Icon(Icons.add),
-                        label: const Text('Adicionar'),
-                        onPressed: () async {
-                          if (_formKey.currentState!.validate()) {
-                            if (user != null) {
-                              final cost =
-                                  double.parse(_costController.text.replaceAll(',', '.'));
-                              final date = DateTime.now();
-
-                              switch (_recordType) {
-                                case RecordType.maintenance:
-                                  await firestoreService.addMaintenance(
-                                    user.uid,
-                                    widget.truckId,
-                                    MaintenanceModel(
-                                      id: '',
-                                      truckId: widget.truckId,
-                                      description: _descriptionController.text,
-                                      cost: cost,
-                                      date: date,
-                                    ),
-                                  );
-                                  break;
-                                case RecordType.refueling:
-                                  await firestoreService.addRefueling(
-                                    user.uid,
-                                    widget.truckId,
-                                    RefuelingModel(
-                                      id: '',
-                                      truckId: widget.truckId,
-                                      liters: double.parse(
-                                          _litersController.text.replaceAll(',', '.')),
-                                      cost: cost,
-                                      date: date,
-                                    ),
-                                  );
-                                  break;
-                                case RecordType.expense:
-                                  await firestoreService.addExpense(
-                                    user.uid,
-                                    widget.truckId,
-                                    ExpenseModel(
-                                      id: '',
-                                      truckId: widget.truckId,
-                                      description: _descriptionController.text,
-                                      cost: cost,
-                                      date: date,
-                                    ),
-                                  );
-                                  break;
-                              }
-                              if (mounted) {
-                                Navigator.pop(context);
-                              }
-                            }
-                          }
-                        },
+                        icon: _isLoading ? Container() : const Icon(Icons.add),
+                        label: _isLoading
+                            ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
+                            : const Text('Adicionar'),
+                        onPressed: _isLoading ? null : _submitRecord, // Botão chama a nova função de submit
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.deepPurple,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 16.0),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8.0),
-                          ),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
                         ),
                       ),
                     ),
